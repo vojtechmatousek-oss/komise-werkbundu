@@ -1,0 +1,773 @@
+<!doctype html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Komise Werkbundu</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ================================================================
+     BARVY (inspirace Bauhausem) + VELIKOST PÍSMA
+     Písmo se počítá z velikosti okna (vw = šířka, vh = výška),
+     takže na projektoru 1024×768 i 1920×1080 zabírá stejný podíl plochy.
+     ================================================================ */
+  :root {
+    --paper: #f4efe6;
+    --ink: #111;
+    --muted: #3f3c37;     /* tmavší „šedá“, aby byla čitelná i na projektoru */
+    --red: #c8281e;
+    --blue: #1d4b97;
+    --yellow: #f0bf00;
+    --ok: #17703a;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Jost", "Futura", "Segoe UI", sans-serif;
+    font-size: clamp(16px, min(2.05vw, 3.5vh), 44px);
+    line-height: 1.3;
+    overflow: hidden;
+  }
+
+  /* ---------- HORNÍ LIŠTA: kód otázky, název kola, časovač, ovládání ---------- */
+  .topbar {
+    position: fixed; inset: 0 0 auto 0; height: 2.6em;
+    display: flex; align-items: center; gap: .6em;
+    padding: 0 .8em; border-bottom: 4px solid var(--ink);
+    background: var(--paper); z-index: 10;
+  }
+  .qid {
+    background: var(--ink); color: #fff; font-weight: 800; font-size: 1.25em;
+    padding: .05em .45em; min-width: 2.2em; text-align: center;
+  }
+  .qid:empty { display: none; }
+  .label { font-weight: 800; letter-spacing: .03em; text-transform: uppercase; font-size: .8em; }
+  .spacer { flex: 1; }
+  .timer {
+    font-variant-numeric: tabular-nums; font-weight: 800; font-size: 1.35em;
+    min-width: 3.6em; text-align: center; padding: 0 .3em;
+    border: 4px solid var(--ink); cursor: pointer; user-select: none; line-height: 1.3;
+  }
+  .timer.running { background: var(--yellow); }
+  .timer.paused { opacity: .55; }
+  .timer.over { background: var(--red); color: #fff; animation: blink 1s steps(2) infinite; }
+  @keyframes blink { 50% { opacity: .5; } }
+  button {
+    font: inherit; font-weight: 700; cursor: pointer;
+    border: 3px solid var(--ink); background: #fff; color: var(--ink);
+    padding: .1em .55em; font-size: .75em;
+  }
+  button:hover { background: var(--yellow); }
+  /* Ovládací tlačítka v liště jsou záměrně tichá – pozornost patří kódu otázky a času */
+  .ctrls { display: flex; gap: .25em; opacity: .55; }
+  .ctrls:hover { opacity: 1; }
+  .ctrls button { border-width: 2px; background: transparent; font-size: .65em; }
+
+  /* ---------- SNÍMKY ---------- */
+  .deck { position: fixed; inset: 2.6em 0 3.2em 0; }
+  .slide { position: absolute; inset: 0; padding: .7em 1.1em; display: none; overflow: auto; }
+  .slide.active { display: block; }
+  h1 { font-size: 2.9em; line-height: 1; margin: .1em 0 .2em; font-weight: 800; }
+  h2 { font-size: 1.55em; margin: 0 0 .35em; font-weight: 800; line-height: 1.1; }
+  .kicker { color: var(--red); font-weight: 800; text-transform: uppercase; letter-spacing: .06em; font-size: .75em; }
+  .muted { color: var(--muted); }
+  .two { display: grid; grid-template-columns: 1.1fr 1fr; gap: 1em; align-items: start; }
+
+  /* Zadání: očíslované úkoly, studenti píšou „1A: 1) … 2) …“ */
+  .task { border-left: 8px solid var(--blue); padding: .1em 0 .1em .6em; margin-bottom: .5em; font-size: 1.12em; }
+  .task ol { margin: 0; padding-left: 1.2em; }
+  .task li { margin: .25em 0; line-height: 1.2; }
+  .task li::marker { font-weight: 800; color: var(--blue); }
+  .rule { font-size: .85em; color: var(--muted); margin: -.2em 0 .5em; }
+
+  /* Fotky (ořez řízený object-position, aby nebyly vidět nápisy) */
+  .photo { width: 100%; overflow: hidden; border: 4px solid var(--ink); background: #ddd; }
+  .photo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .credit { font-size: .45em; color: var(--muted); margin-top: .2em; }
+
+  /* Odpověď – skrytá, dokud učitel neodhalí */
+  .answer {
+    display: none; background: #fff; border: 4px solid var(--ok);
+    padding: .35em .6em; margin-top: .4em;
+  }
+  .slide.revealed .answer { display: block; }
+  .answer .big { font-size: 1.15em; font-weight: 800; color: var(--ok); margin: 0 0 .15em; line-height: 1.15; }
+  .answer p { margin: .2em 0; }
+  .slide.revealed .answer.grid { display: grid; grid-template-columns: 1fr 1fr; gap: .1em 1em; font-size: .85em; }
+
+  /* ---------- KOLO 2: očíslovaná tvrzení ---------- */
+  ol.claims { margin: 0; padding: 0; list-style: none; counter-reset: c; columns: 2; column-gap: 1.2em; }
+  ol.claims li {
+    counter-increment: c; break-inside: avoid; position: relative;
+    padding: .2em .3em .2em 1.9em; margin-bottom: .3em; background: #fff; border: 3px solid var(--ink);
+    line-height: 1.15; font-size: .88em;
+  }
+  ol.claims li::before {
+    content: counter(c); position: absolute; left: 0; top: 0; bottom: 0; width: 1.45em;
+    background: var(--ink); color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center;
+  }
+  .fix { display: none; color: var(--red); font-weight: 800; }
+  .slide.revealed li.wrong { background: #fbe3e0; border-color: var(--red); }
+  .slide.revealed li.wrong::before { background: var(--red); }
+  .slide.revealed li.wrong .claimtext { text-decoration: line-through; text-decoration-color: var(--red); }
+  .slide.revealed li.wrong .fix { display: inline; }
+  .slide.revealed li.right::after { content: "✓"; color: var(--ok); font-weight: 800; margin-left: .3em; }
+
+  /* ---------- KOLO 3: tabulka pěti bodů ---------- */
+  table.five { border-collapse: collapse; width: 100%; background: #fff; }
+  table.five td { border: 3px solid var(--ink); padding: .2em .4em; vertical-align: top; }
+  table.five td:first-child { width: 1.6em; text-align: center; font-weight: 800; background: var(--ink); color: #fff; }
+  .verdict { display: none; font-weight: 800; float: right; margin-left: .4em; }
+  .why { display: none; font-size: .78em; color: var(--muted); }
+  .slide.revealed .verdict, .slide.revealed .why { display: block; }
+  .yes { color: var(--ok); } .no { color: var(--red); } .part { color: #9a6d00; }
+
+  /* ---------- KOLO 4: vetřelec ---------- */
+  .quad { display: grid; grid-template-columns: repeat(2, 1fr); gap: .5em; margin: .4em 0; }
+  .quad div {
+    border: 4px solid var(--ink); background: #fff; padding: .45em .4em; text-align: center;
+    font-weight: 800; font-size: 1.35em; position: relative;
+  }
+  .quad div span { position: absolute; left: .3em; top: .1em; font-size: .55em; color: var(--muted); }
+  .slide.revealed .quad div.odd { background: var(--red); color: #fff; }
+  .slide.revealed .quad div.odd span { color: #fff; }
+
+  /* ---------- ÚVOD ---------- */
+  .hero { display: grid; grid-template-columns: 1.5fr 1fr; gap: 1.2em; align-items: center; }
+  .shapes { position: relative; aspect-ratio: 1; max-height: 55vh; }
+  .shapes span { position: absolute; display: block; }
+  .s1 { width: 58%; aspect-ratio: 1; border-radius: 50%; background: var(--red); left: 0; top: 6%; }
+  .s2 { width: 50%; aspect-ratio: 1; background: var(--blue); right: 0; bottom: 0; }
+  .s3 { width: 0; height: 0; border-left: 17vh solid transparent; border-right: 17vh solid transparent; border-bottom: 27vh solid var(--yellow); right: 4%; top: 0; }
+  .s4 { height: 8px; width: 100%; background: var(--ink); left: 0; top: 64%; }
+  .lead { font-size: 1.15em; margin: .15em 0 .35em; line-height: 1.25; max-width: 24em; }
+  .sublead { margin: 0 0 .8em; color: var(--muted); max-width: 28em; }
+  .howto { display: grid; grid-template-columns: repeat(3, 1fr); gap: .8em; }
+  .howto div { border-top: 8px solid var(--ink); padding-top: .25em; color: var(--muted); font-size: .85em; }
+  .howto strong { display: block; font-size: 1.3em; color: var(--ink); }
+  /* Řádek pro učitele dole na úvodu – záměrně malý a tichý */
+  .setup { position: absolute; left: 1.1em; bottom: .6em; font-size: .6em; color: var(--muted); display: flex; align-items: center; gap: .3em; }
+  .setup button { font-size: 1em; min-width: 1.8em; border-width: 2px; padding: 0 .3em; }
+  .setup button.on { background: var(--ink); color: #fff; }
+  .setup .sep { width: 1.5em; }
+
+  /* Panely přes celou obrazovku: nápověda (H) a podrobný výklad „Víc“ (V) */
+  .help, .overlay { position: fixed; inset: 0; background: rgba(17,17,17,.6); display: none; align-items: center; justify-content: center; z-index: 50; }
+  .help.open, .overlay.open { display: flex; }
+  .help .box, .overlay .box { background: var(--paper); border: 5px solid var(--ink); padding: .8em 1.2em; font-size: .8em; max-width: 34em; max-height: 90vh; overflow: auto; }
+  .overlay .box.wide { max-width: 46em; font-size: .85em; border-top: 14px solid var(--blue); }
+  .overlay ul { margin: 0; padding-left: 1.1em; }
+  .overlay li { margin: 0 0 .45em; line-height: 1.3; }
+  .closehint { font-size: .7em; margin: .4em 0 0; }
+  .overlay kbd { font: inherit; font-weight: 800; border: 2px solid var(--ink); background: #fff; padding: 0 .3em; }
+  .help h2 { font-size: 1.4em; }
+  .detail { display: none; }   /* obsah pro panel „Víc“, na snímku se neukazuje */
+  button.more { font-size: .8em; background: var(--blue); color: #fff; border-color: var(--blue); padding: .15em .7em; }
+  button.more:hover { background: var(--ink); border-color: var(--ink); }
+
+  /* Tlačítko Odhalit v liště */
+  button.reveal { background: var(--ok); color: #fff; border-color: var(--ok); font-size: .8em; padding: .15em .7em; }
+  button.reveal:hover { background: var(--ink); border-color: var(--ink); }
+  .qid.ans { background: var(--ok); }
+  /* Snímek „Vyhodnocení“ */
+  .slide.divider { display: none; }
+  .slide.divider.active { display: flex; flex-direction: column; justify-content: center; }
+  .slide.divider h1 { color: var(--ok); }
+  .help table { border-collapse: collapse; width: 100%; }
+  .help td { padding: .25em .4em; border-bottom: 2px solid #d9d1c2; vertical-align: top; }
+  .help td:first-child { white-space: nowrap; font-weight: 800; width: 1%; }
+  .help kbd { font: inherit; font-weight: 800; border: 2px solid var(--ink); background: #fff; padding: 0 .3em; }
+
+  /* ---------- SPODNÍ LIŠTA: skóre skupin ---------- */
+  .scores {
+    position: fixed; inset: auto 0 0 0; height: 3.2em; display: flex; gap: .4em;
+    align-items: center; padding: 0 .6em; border-top: 4px solid var(--ink);
+    background: var(--paper); z-index: 10;
+  }
+  .team {
+    display: flex; align-items: center; gap: .25em; flex: 1; justify-content: center; min-width: 0;
+    border: 3px solid var(--ink); background: #fff; padding: .1em .3em; height: 2.4em;
+  }
+  .team .key { font-weight: 800; padding: .05em .4em; font-size: .85em; flex: none; border: 2px solid var(--ink); }
+  .team input { font: inherit; font-weight: 700; font-size: .7em; width: 100%; min-width: 3em; border: 0; background: transparent; text-overflow: ellipsis; }
+  .team .score { font-size: 1.45em; font-weight: 800; min-width: 1.3em; text-align: center; font-variant-numeric: tabular-nums; }
+  .team button { padding: 0 .4em; font-size: .9em; line-height: 1.2; }
+  .team.lead { outline: 5px solid var(--yellow); }
+  .team.bump .score { animation: bump .5s; }
+  @keyframes bump { 30% { transform: scale(1.5); color: var(--red); } }
+
+  .final-board { display: flex; gap: .6em; margin: .8em 0; flex-wrap: wrap; }
+  .final-board div { flex: 1; border: 4px solid var(--ink); background: #fff; padding: .4em; text-align: center; font-weight: 700; }
+  .final-board b { display: block; font-size: 2.4em; }
+  .sources { font-size: .5em; columns: 2; column-gap: 2em; }
+  .sources p { margin: 0 0 .5em; break-inside: avoid; }
+  a { color: var(--blue); }
+</style>
+</head>
+<body>
+
+<!-- ========== HORNÍ LIŠTA ========== -->
+<div class="topbar">
+  <span class="qid" id="qid"></span>
+  <span class="label" id="roundLabel"></span>
+  <span class="spacer"></span>
+  <button id="moreBtn" class="more" title="Podrobnější výklad (klávesa V)">Víc ▸</button>
+  <button id="revealBtn" class="reveal" title="Klávesa R">Odhalit</button>
+  <div class="timer" id="timer" title="Klik nebo T: pauza / pokračovat">0:00</div>
+  <span class="ctrls">
+    <button id="prevBtn" title="Zpět (šipka vlevo)">◀</button>
+    <button id="nextBtn" title="Další snímek (šipka vpravo / mezerník)">▶</button>
+    <button id="helpBtn" title="Nápověda (H)">?</button>
+    <button id="fsBtn" title="Celá obrazovka (F)">⛶</button>
+  </span>
+</div>
+
+<!-- ========== NÁPOVĚDA PRO UČITELE (klávesa H) ========== -->
+<div class="help" id="help">
+  <div class="box">
+    <h2>Ovládání</h2>
+    <table>
+      <tr><td><kbd>→</kbd> <kbd>mezerník</kbd> klikr</td><td>další snímek</td></tr>
+      <tr><td><kbd>←</kbd></td><td>zpět</td></tr>
+      <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>+1 bod skupině (<kbd>Shift</kbd> + číslo = −1)</td></tr>
+      <tr><td><kbd>T</kbd> / klik na čas</td><td>pauza / pokračování časovače (u otázek se spouští sám)</td></tr>
+      <tr><td><kbd>R</kbd> / Odhalit</td><td>ukázat / schovat odpověď (kdykoli)</td></tr>
+      <tr><td><kbd>V</kbd> / Víc ▸</td><td>podrobnější výklad (u odhalené odpovědi)</td></tr>
+      <tr><td>po otázce 4C</td><td>blok <b>Vyhodnocení</b>: všechny otázky znovu, s odpověďmi</td></tr>
+      <tr><td><kbd>F</kbd></td><td>celá obrazovka</td></tr>
+      <tr><td>dole</td><td>názvy skupin jdou přepsat kliknutím</td></tr>
+    </table>
+    <p class="muted" style="margin:.5em 0 0">Zavřít: <kbd>H</kbd>, <kbd>Esc</kbd> nebo klik kamkoli.</p>
+  </div>
+</div>
+
+<!-- ========== SNÍMKY ==========
+     data-id    = kód otázky, který studenti píšou na papír
+     data-label = název kola v horní liště
+     data-time  = čas v sekundách (0 = bez časovače)
+-->
+<main class="deck">
+
+  <!-- ÚVOD -->
+  <section class="slide" data-id="" data-label="Komise Werkbundu" data-time="0">
+    <div class="hero">
+      <div>
+        <div class="kicker">Praha, září 1932 · výstava osady Baba</div>
+        <h1>Komise Werkbundu</h1>
+        <p class="lead">Na Babě se otevírá výstava moderního bydlení. Vy jste odborná komise: než pustíte návštěvníky dovnitř, ukažte, že funkcionalismu opravdu rozumíte.</p>
+        <p class="sublead">Čtyři kola otázek ve skupinách. Odpovědi si zapisujete, správné řešení uvidíte až na konci při vyhodnocení.</p>
+        <div class="howto">
+          <div><strong>Pište kód otázky</strong>štítek vlevo nahoře (např. 1A) + číslo úkolu + odpověď</div>
+          <div><strong>1 bod za úkol</strong>odpověď bez zdůvodnění = 0 bodů</div>
+          <div><strong>Kolo 2: pozor</strong>označíte-li pravdivé tvrzení jako chybu, −1 bod</div>
+        </div>
+      </div>
+      <div class="shapes" aria-hidden="true"><span class="s1"></span><span class="s3"></span><span class="s2"></span><span class="s4"></span></div>
+    </div>
+    <!-- Nenápadný řádek pro učitele: nastavení skupin + odkaz na nápovědu -->
+    <div class="setup">
+      Skupiny: <button data-teams="2">2</button><button data-teams="3">3</button><button data-teams="4">4</button><button data-teams="5">5</button><button data-teams="6">6</button>
+      <span class="sep"></span> Ovládání: klávesa <b>H</b> nebo <b>?</b> vpravo nahoře
+    </div>
+  </section>
+
+  <!-- =============== OTÁZKY (class="q" = na konci se zopakují s odpověďmi) =============== -->
+
+  <!-- 1A · Villa Savoye -->
+  <section class="slide q" data-id="1A" data-label="Kolo 1 · Bez popisky" data-time="75">
+    <div class="two">
+      <div>
+        <div class="photo" style="aspect-ratio:3/2"><img src="img/savoye.jpg" alt="Bílá vila na sloupech"></div>
+        <div class="credit">Foto: z prezentace třídy (Funkcionalismus)</div>
+      </div>
+      <div>
+        <h2>Zařaďte stavbu.</h2>
+        <div class="task"><ol>
+          <li>Název a místo</li>
+          <li>Architekt</li>
+          <li>Rok ± 2</li>
+          <li>Které z <b>pěti bodů</b> Le Corbusiera na fotce vidíte? A který z nich z fotky <b>poznat nejde</b>?</li>
+        </ol></div>
+        <div class="answer">
+          <p class="big">Villa Savoye, Poissy u Paříže<br>Le Corbusier, 1928–31</p>
+          <p>Na fotce: piloty · pásová okna · volné průčelí · střešní zahrada.
+            <b>Poznat nejde: volný půdorys</b> (je vidět jen zevnitř).</p>
+        </div>
+      </div>
+    </div>
+    <div class="detail" data-title="Villa Savoye: víc">
+      <ul>
+        <li><b>Víkendový dům</b> pro manžele Savoyeovy u Paříže. Le Corbusier ho navrhl s bratrancem <b>Pierrem Jeanneretem</b>.</li>
+        <li><b>Učebnicová ukázka pěti bodů.</b> Le Corbusier je zformuloval v letech 1926–27 a zveřejnil v souvislosti s výstavou Weissenhof (1927).</li>
+        <li><b>Dům pro auto.</b> Zaoblené přízemí kopíruje poloměr otáčení automobilu, kterým se přijíždělo až pod dům. Je to strojová estetika: „dům je stroj na bydlení“ (<i>Vers une architecture</i>, 1923).</li>
+        <li><b>Promenade architecturale.</b> Středem domu stoupá rampa a prostor se odhaluje postupně při chůzi, od vstupu až po střešní solárium.</li>
+        <li><b>Osud:</b> brzy se objevily problémy se zatékáním, za války byl dům poškozen. Dnes je to muzeum a od roku 2016 součást světového dědictví UNESCO (soubor Le Corbusierových staveb).</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 1B · Památník Tomáše Bati (ořez bez cedule) -->
+  <section class="slide q" data-id="1B" data-label="Kolo 1 · Bez popisky" data-time="75">
+    <div class="two">
+      <div>
+        <div class="photo" style="aspect-ratio:1/1; max-height:62vh"><img src="img/pamatnik.jpg" alt="Prosklená stavba" style="object-position:100% 50%"></div>
+        <div class="credit">Foto: Palickap, CC BY-SA 4.0, Wikimedia Commons (výřez)</div>
+      </div>
+      <div>
+        <h2>Zařaďte stavbu.</h2>
+        <div class="task"><ol>
+          <li>Název a město</li>
+          <li>Architekt</li>
+          <li>Rok ± 2</li>
+          <li><b>K čemu stavba sloužila?</b></li>
+        </ol></div>
+        <div class="answer">
+          <p class="big">Památník Tomáše Bati, Zlín<br>F. L. Gahura, 1933</p>
+          <p>Pomník Tomáši Baťovi, který zahynul v roce 1932 při letecké havárii. Uvnitř viselo letadlo Junkers F 13.</p>
+        </div>
+      </div>
+    </div>
+    <div class="detail" data-title="Památník Tomáše Bati: víc">
+      <ul>
+        <li><b>Havárie:</b> Tomáš Baťa zahynul v červenci 1932 krátce po startu letounu Junkers F 13 z letiště v Otrokovicích. Památník byl otevřen v roce 1933, rok po jeho smrti.</li>
+        <li><b>František Lýdie Gahura</b> byl hlavní architekt baťovského Zlína: územní plán, radnice, obchodní dům, Velké kino.</li>
+        <li><b>Konstrukce:</b> železobetonový skelet ve zlínském modulu <b>6,15 × 6,15 m</b>, stejném jako u továrních budov, a celoskleněný plášť. Památník tedy používá „tovární“ jazyk pro pietní účel.</li>
+        <li><b>Osud:</b> v 50. letech byl přestavěn na Dům umění (sídlo filharmonie) a původní podoba zmizela. V letech 2018–2019 ho obnovil Petr Všetečka (Transat architekti). Vrátila se i replika letadla, kterou za zhruba 6 mil. Kč vyrobila olomoucká firma.</li>
+        <li><b>Proč je to záludné:</b> stavba je funkcionalistická tvarem i konstrukcí, ale její „funkce“ je symbolická. Na to navazuje závěrečný rozstřel.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 1C · Vila Paličkových, Baba -->
+  <section class="slide q" data-id="1C" data-label="Kolo 1 · Bez popisky" data-time="75">
+    <div class="two">
+      <div>
+        <div class="photo" style="aspect-ratio:3/2"><img src="img/palicka.jpg" alt="Vila z ulice"></div>
+        <div class="credit">Foto: Jirka Dl, CC BY-SA 4.0, Wikimedia Commons</div>
+      </div>
+      <div>
+        <h2>Pohled z ulice. Kdo a kde?</h2>
+        <div class="task"><ol>
+          <li>Osada / kolonie a město</li>
+          <li>Architekt</li>
+          <li>Čím je autor v rámci osady <b>výjimečný</b>?</li>
+          <li>Co je vidět ze <b>zahrady</b>, ale ne z ulice?</li>
+        </ol></div>
+        <div class="answer">
+          <p class="big">Vila Paličkových, osada Baba, Praha<br>Mart Stam, 1932</p>
+          <p>Jediný zahraniční architekt na Babě (Nizozemec). Ze zahrady: dům vyzdvižený na <b>pilotech</b>.</p>
+        </div>
+      </div>
+    </div>
+    <div class="detail" data-title="Osada Baba a Mart Stam: víc">
+      <ul>
+        <li><b>Mart Stam</b> (1899–1986), nizozemský architekt. Stavěl i ve Stuttgartu na Weissenhofu (1927) a je považován za autora první <b>konzolové židle</b> bez zadních nohou (1926).</li>
+        <li><b>Vilu</b> postavil pro Jiřího Paličku a textilní výtvarnici <b>Emílii Paličkovou</b>.</li>
+        <li><b>Osada Baba</b> byla výstava Svazu československého díla (českého Werkbundu) z roku 1932. Plán navrhl <b>Pavel Janák</b>: 33 domů ve čtyřech ulicích podél vrstevnic, rozmístěných šachovnicově kvůli výhledu a soukromí, s obytnými místnostmi na jih.</li>
+        <li><b>Rozdíl oproti Stuttgartu a Brnu:</b> každý dům byl navržen pro konkrétního soukromého stavebníka, ne jako vzorový typ.</li>
+        <li><b>Dnes:</b> domy jsou stále obydlené. Od roku 1993 je osada městská památková zóna a v roce 2020 získala Značku evropského dědictví (podle prezentace třídy).</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 2 · Opravte kurátora (12 tvrzení, 4 chybná) -->
+  <section class="slide q" data-id="2" data-label="Kolo 2 · Opravte kurátora" data-time="180">
+    <h2>Z katalogu výstavy: <span style="color:var(--red)">4 tvrzení jsou špatně.</span></h2>
+    <p class="rule">Pište <b>číslo + opravu</b>. Za označení pravdivého tvrzení <b>−1</b>.</p>
+    <ol class="claims">
+      <li class="right"><span class="claimtext">Deutscher Werkbund vznikl roku 1907 v Mnichově.</span></li>
+      <li class="right"><span class="claimtext">Walter Gropius založil Bauhaus roku 1919 ve Výmaru.</span></li>
+      <li class="wrong"><span class="claimtext">Roku 1925 se Bauhaus přestěhoval do Berlína.</span> <span class="fix">→ do Dessau</span></li>
+      <li class="right"><span class="claimtext">Po Gropiovi vedl Bauhaus Hannes Meyer, po něm Mies van der Rohe.</span></li>
+      <li class="right"><span class="claimtext">Roku 1927 uspořádal Werkbund výstavu Weissenhof ve Stuttgartu.</span></li>
+      <li class="wrong"><span class="claimtext">Urbanistický plán brněnské kolonie Nový dům (1928) navrhl Pavel Janák.</span> <span class="fix">→ Bohuslav Fuchs</span></li>
+      <li class="right"><span class="claimtext">Urbanistický plán osady Baba navrhl Pavel Janák.</span></li>
+      <li class="right"><span class="claimtext">Obytné místnosti domů na Babě jsou orientované na jih.</span></li>
+      <li class="wrong"><span class="claimtext">Jediným zahraničním architektem na Babě byl Le Corbusier.</span> <span class="fix">→ Mart Stam</span></li>
+      <li class="wrong"><span class="claimtext">K pěti bodům Le Corbusiera patří nosné obvodové zdi.</span> <span class="fix">→ volné průčelí</span></li>
+      <li class="right"><span class="claimtext">Kongres CIAM byl založen roku 1928.</span></li>
+      <li class="right"><span class="claimtext">Výstavu „The International Style“ (New York, 1932) spoluorganizoval Philip Johnson.</span></li>
+    </ol>
+    <div class="detail" data-title="Kolo 2: souvislosti k chybám">
+      <ul>
+        <li><b>3 · Dessau:</b> v roce 1924 ztratil Bauhaus po volbách v Durynsku podporu a musel z Výmaru odejít. V Dessau dostal novou budovu od Gropia (1925–26). V roce 1932 ho zavřela městská rada ovládaná nacisty, škola se přesunula do Berlína jako soukromá a v roce 1933 se sama rozpustila.</li>
+        <li><b>4 · pořadí ředitelů (pravda):</b> Hannes Meyer (1928–30) byl odvolán z politických důvodů, kvůli obvinění z komunistických aktivit. Po něm přišel Mies van der Rohe (1930–33).</li>
+        <li><b>6 · Nový dům:</b> plán navrhl Bohuslav Fuchs, projekt vedl spolu s Jaroslavem Gruntem. Šestnáct vzorových domů od devíti architektů podle příkladu Weissenhofu. Kolonie byla součástí Výstavy soudobé kultury 1928.</li>
+        <li><b>7 · Janák a Baba (pravda):</b> je to past pro ty, kdo si spletli Brno a Prahu.</li>
+        <li><b>9 · Mart Stam:</b> Le Corbusier na Babě nestavěl. Ve Stuttgartu (1927) ale stavěli oba.</li>
+        <li><b>10 · volné průčelí:</b> nosnou funkci přebírá skelet, fasáda se proto může libovolně otevírat okny. Nosné obvodové zdi jsou přesný opak.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 3A · Tugendhat vs. pět bodů -->
+  <section class="slide q" data-id="3A" data-label="Kolo 3 · Výslech" data-time="180">
+    <h2>Vila Tugendhat vs. 5 bodů Le Corbusiera</h2>
+    <div class="two">
+      <div>
+        <div class="photo" style="aspect-ratio:11/4"><img src="img/tugendhat.jpg" alt="Vila Tugendhat ze zahrady" style="transform:scale(2.1); transform-origin:48% 47%"></div>
+        <div class="credit">Foto: Karelj, CC BY-SA 3.0, Wikimedia Commons</div>
+        <div class="task" style="margin-top:.4em; font-size:1em">Ke každému bodu: <b>ANO / ČÁSTEČNĚ / NE</b> + <b>důkaz z vily</b>.</div>
+        <div class="answer"><p><b>Pointa:</b> pět bodů je manifest Le Corbusiera, ne definice funkcionalismu. Mies (1929–30) šel jinou cestou.</p></div>
+      </div>
+      <div>
+        <table class="five">
+          <tr><td>1</td><td><b>Piloty</b> <span class="verdict no">NE</span>
+            <span class="why">Stojí ve svahu: z ulice je přízemní, do zahrady má víc podlaží.</span></td></tr>
+          <tr><td>2</td><td><b>Střešní zahrada</b> <span class="verdict part">ČÁSTEČNĚ</span>
+            <span class="why">Velká terasa v horním podlaží, ale žádná zahrada.</span></td></tr>
+          <tr><td>3</td><td><b>Volný půdorys</b> <span class="verdict yes">ANO</span>
+            <span class="why">Ocelový skelet, chromované sloupy. Prostor dělí jen onyxová a ebenová stěna.</span></td></tr>
+          <tr><td>4</td><td><b>Pásová okna</b> <span class="verdict no">NE / jinak</span>
+            <span class="why">Místo pásu oken je celá stěna skleněná, tabule se spouštěly do podlahy.</span></td></tr>
+          <tr><td>5</td><td><b>Volné průčelí</b> <span class="verdict yes">ANO</span>
+            <span class="why">Fasáda nic nenese, nosný je skelet.</span></td></tr>
+        </table>
+      </div>
+    </div>
+    <div class="detail" data-title="Vila Tugendhat: víc">
+      <ul>
+        <li><b>Stavebníci:</b> Fritz a Greta Tugendhatovi. Ludwig Mies van der Rohe ji navrhl v letech 1929–30, interiér a nábytek navrhl spolu s Lilly Reichovou (např. křeslo „Tugendhat“ a „Brno“).</li>
+        <li><b>Plynoucí prostor místo pokojů:</b> obytné patro je jeden velký prostor. Dělí ho volně stojící <b>onyxová stěna</b> (onyx z pohoří Atlas, při západu slunce prosvítá a mění barvu) a půlkruhová stěna z <b>makasarského ebenu</b>.</li>
+        <li><b>Technika:</b> dvě velké skleněné tabule se elektricky spouštěly do podlahy a obytný prostor se tak otevřel do zahrady.</li>
+        <li><b>Mies vs. Le Corbusier:</b> Le Corbusier chtěl standard a „stroj na bydlení“, Mies luxusní materiály a dokonalý detail („less is more“). Oba jsou funkcionalisté, ale každý jinak.</li>
+        <li><b>Osud:</b> rodina v roce 1938 emigrovala, za války vilu zabralo gestapo. V roce 1992 se tu jednalo o rozdělení Československa. Od roku 2001 je památkou UNESCO, v letech 2010–12 prošla rekonstrukcí.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 3B · 20. léta vs. mezinárodní sloh -->
+  <section class="slide q" data-id="3B" data-label="Kolo 3 · Dvě desetiletí" data-time="90">
+    <h2>Funkcionalismus 20. let vs. mezinárodní sloh 30. let</h2>
+    <div class="task"><ol>
+      <li>Dva <b>podstatné rozdíly</b> (ne „ve 30. letech se víc stavělo“)</li>
+      <li>Proč se tomu říká <b>„sloh“</b>? Co se s hnutím stalo?</li>
+      <li>Která stavba z dnešní hodiny patří spíš do <b>30. let</b> a proč?</li>
+    </ol></div>
+    <div class="answer grid">
+      <p><b>20. léta:</b> avantgardní program, sociální utopie. Forma z funkce, proto <b>asymetrický půdorys</b>, každá zóna má vlastní hmotu.</p>
+      <p><b>30. léta:</b> šíří se po světě (časopisy, výstavy, CIAM, emigrace). <b>Pravidla se uvolňují</b>, stavba přestává vyjadřovat funkci.</p>
+      <p><b>„Sloh“:</b> výstava MoMA, New York 1932 (Hitchcock, Johnson). Z programu se stává soubor vizuálních znaků.</p>
+      <p><b>Příklad:</b> Památník T. Bati (1933), symetrický skleněný kvádr pro reprezentaci.</p>
+    </div>
+    <div class="detail" data-title="Od programu ke slohu: víc">
+      <ul>
+        <li><b>Výstava a kniha:</b> Henry-Russell Hitchcock a Philip Johnson uspořádali v roce 1932 v MoMA výstavu <i>Modern Architecture: International Exhibition</i> a vydali knihu <i>The International Style: Architecture Since 1922</i>.</li>
+        <li><b>Jejich tři principy:</b> architektura jako <b>objem</b> (ne hmota a masa), <b>pravidelnost</b> místo osové symetrie, <b>žádný přidaný ornament</b>. Jsou to čistě formální kritéria.</li>
+        <li><b>Co se ztratilo:</b> evropská avantgarda 20. let chtěla řešit bydlení pro masy, hygienu a sociální otázku. Americké pojetí z toho udělalo hlavně vzhled. Proto „sloh“.</li>
+        <li><b>Šíření:</b> po roce 1933 emigrují Gropius (Harvard), Mies (Chicago) a Breuer. Po válce se ze slohu stává jazyk kancelářských věží po celém světě.</li>
+        <li><b>Kritika:</b> od 60. let ho napadá postmoderna. Robert Venturi na Miesovo „less is more“ odpověděl „less is a bore“.</li>
+        <li><b>U nás:</b> ve 30. letech se funkcionalismus stává běžným stylem činžáků, vil a obchodních domů. Baťův Zlín ukazuje jeho standardizovanou, průmyslovou podobu.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- 4A–4C · Vetřelec -->
+  <section class="slide q" data-id="4A" data-label="Kolo 4 · Vetřelec" data-time="60">
+    <h2>Kdo sem nepatří? Zdůvodněte.</h2>
+    <div class="quad"><div><span>A</span>Pavel Janák</div><div><span>B</span>Josef Gočár</div><div><span>C</span>Ladislav Žák</div><div class="odd"><span>D</span>F. L. Gahura</div></div>
+    <div class="answer">
+      <p class="big">D: Gahura nestavěl na Babě, je to architekt Baťova Zlína.</p>
+      <p>Lze uznat i: <b>A Janák</b> (jako jediný navrhl plán celé osady) · <b>C Žák</b> (mladší generace, Janák a Gočár začínali jako kubisté).</p>
+    </div>
+  </section>
+
+  <section class="slide q" data-id="4B" data-label="Kolo 4 · Vetřelec" data-time="60">
+    <h2>Co sem nepatří? Zdůvodněte.</h2>
+    <div class="quad"><div><span>A</span>Stuttgart 1927</div><div><span>B</span>Brno 1928</div><div class="odd"><span>C</span>Dessau 1925</div><div><span>D</span>Praha 1932</div></div>
+    <div class="answer">
+      <p class="big">C: Dessau je stěhování Bauhausu, ne výstavní kolonie.</p>
+      <p>Ostatní: Weissenhof, Nový dům, Baba. Lze uznat i: <b>B Brno</b> (jen domácí architekti).</p>
+    </div>
+    <div class="detail" data-title="Výstavní kolonie Werkbundu">
+      <ul>
+        <li>Celkem šest kolonií: <b>Stuttgart 1927</b> (Weissenhof), <b>Brno 1928</b> (Nový dům), <b>Vratislav 1929</b>, <b>Curych 1930–32</b> (Neubühl), <b>Vídeň 1932</b> a <b>Praha 1932</b> (Baba).</li>
+        <li>Cílem bylo ukázat veřejnosti nové bydlení v praxi: vzorové domy, nové materiály, standardizace, světlo a hygiena.</li>
+        <li>Stuttgart měl mezinárodní sestavu (Le Corbusier, Mies, Gropius, Stam…). V Brně stavěli jen českoslovenští architekti. Na Babě stavěli Češi a jediný cizinec, Mart Stam.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="slide q" data-id="4C" data-label="Kolo 4 · Vetřelec" data-time="60">
+    <h2>Co sem nepatří? Zdůvodněte.</h2>
+    <div class="quad"><div><span>A</span>Hotel Avion</div><div><span>B</span>Vila Stiassni</div><div><span>C</span>Kavárna Era</div><div class="odd"><span>D</span>Budova 21</div></div>
+    <div class="answer">
+      <p class="big">D: Budova 21 (Baťův mrakodrap, Karfík 1938) stojí ve Zlíně, ostatní v Brně.</p>
+      <p>Lze uznat i: <b>B Vila Stiassni</b> (Wiesner 1929), jediná postavená k soukromému bydlení.</p>
+    </div>
+  </section>
+
+  <!-- =============== VYHODNOCENÍ: sem skript vloží kopie otázek s odpověďmi =============== -->
+  <section class="slide divider" id="answersDivider" data-id="" data-label="Vyhodnocení" data-time="0">
+    <div class="kicker">Konec otázek · odevzdejte papíry sousední skupině</div>
+    <h1>Vyhodnocení</h1>
+    <p class="lead">Projdeme všechny otázky znovu, tentokrát se správnými odpověďmi. Opravujete papír sousední skupiny a body hlásíte nahlas.</p>
+  </section>
+
+  <!-- R · Rozstřel -->
+  <section class="slide" data-id="R" data-label="Rozstřel · celá třída" data-time="120">
+    <div class="kicker">Kdo souhlasí, vstane · lze vynechat, když dojde čas</div>
+    <h1 style="font-size:2em">„Památník Tomáše Bati neměl praktickou funkci. Takže to není funkcionalismus.“</h1>
+    <div class="task">Každá strana: <b>dva argumenty</b> s konkrétní stavbou z dnešní hodiny. Nejlepší argument: <b>+2</b>.</div>
+    <div class="answer grid">
+      <p><b>Pro:</b> funkcionalismus = bydlení, práce, provoz. Památník je kult zakladatele, tedy ideologie.</p>
+      <p><b>Proti:</b> funkce může být symbolická. Skelet, modul 6,15 m a sklo jako u továren: konstrukce je přiznaná.</p>
+    </div>
+  </section>
+
+  <!-- VÝSLEDKY -->
+  <section class="slide" data-id="" data-label="Výsledky" data-time="0">
+    <div class="kicker">Verdikt komise</div>
+    <h1>Výsledky</h1>
+    <div class="final-board" id="finalBoard"></div>
+    <p>Exit ticket: <i>„Nejvíc mě překvapilo, že …“</i></p>
+  </section>
+
+  <!-- ZDROJE -->
+  <section class="slide" data-id="" data-label="Zdroje" data-time="0">
+    <h2>Zdroje a licence</h2>
+    <div class="sources">
+      <p><b>Obsah:</b> prezentace třídy (Funkcionalismus; Funkcionalismus v Brně a Zlíně; Funkcionalistická osada Baba), doplněno a ověřeno z:</p>
+      <p><a href="https://www.baba1932.com/en/kiosek-osada-baba-en/">baba1932.com – osada Baba</a></p>
+      <p><a href="https://www.archiweb.cz/en/b/kolonie-novy-dum">Archiweb – kolonie Nový dům</a> · <a href="https://www.bam.brno.cz/en/object/c185-new-house-estate">BAM Brno</a></p>
+      <p><a href="https://pamatnikbata.eu/en/about-memorial">pamatnikbata.eu – o památníku</a> · <a href="https://zam.zlin.eu/en/object/16-tomas-bata-memorial">ZAM Zlín</a> · <a href="https://ct24.ceskatelevize.cz/clanek/regiony/do-pamatniku-tomase-bati-se-vratilo-letadlo-maketu-za-sest-milionu-vyrobila-olomoucka-firma-65457">ČT24 – replika letadla</a></p>
+      <p><a href="https://tugendhat.eu/wp-content/uploads/2024/07/CZ_VT_Strucny.pdf">tugendhat.eu – stručný průvodce vilou</a></p>
+      <p><a href="https://en.wikipedia.org/wiki/Villa_Savoye">Villa Savoye (Wikipedia)</a> · <a href="https://www.fondationlecorbusier.fr/en/?p=15437">Fondation Le Corbusier</a></p>
+      <p><a href="https://www.archdaily.com/409918/ad-classics-modern-architecture-international-exhibition-philip-johnson-and-henry-russell-hitchcock">ArchDaily – výstava MoMA 1932</a></p>
+      <p><a href="https://en.wikipedia.org/wiki/Hannes_Meyer">Hannes Meyer (Wikipedia)</a> · <a href="https://www.estav.cz/cz/8152">estav.cz – Baťův mrakodrap</a></p>
+      <p><b>Fotografie:</b></p>
+      <p>Villa Savoye: převzato z prezentace třídy, autor fotografie neuveden</p>
+      <p>Památník Tomáše Bati: Palickap, <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>, <a href="https://commons.wikimedia.org/wiki/File:Zl%C3%ADn,_Pam%C3%A1tn%C3%ADk_Tom%C3%A1%C5%A1e_Bati_(2).jpg">originál</a> (výřez)</p>
+      <p>Vila Paličkových: Jirka Dl, <a href="https://creativecommons.org/licenses/by-sa/4.0/">CC BY-SA 4.0</a>, <a href="https://commons.wikimedia.org/wiki/File:Baba_-_Pali%C4%8Dka_01.jpg">originál</a></p>
+      <p>Vila Tugendhat: Karelj, <a href="https://creativecommons.org/licenses/by-sa/3.0/">CC BY-SA 3.0</a>, <a href="https://commons.wikimedia.org/wiki/File:Vila_Tugendhat_Brno_2016_5.jpg">originál</a> (výřez)</p>
+    </div>
+  </section>
+</main>
+
+<!-- ========== PANEL „VÍC“ (podrobné vysvětlení) ========== -->
+<div class="overlay" id="detailPanel">
+  <div class="box wide">
+    <h2 id="detailTitle"></h2>
+    <div id="detailBody"></div>
+    <p class="muted closehint">Zavřít: <kbd>Esc</kbd>, <kbd>V</kbd> nebo klik mimo.</p>
+  </div>
+</div>
+
+<!-- ========== SKÓRE SKUPIN ========== -->
+<footer class="scores" id="scores"></footer>
+
+<script>
+/* ==================================================================
+   PRŮBĚH HRY
+   1) Otázky jdou za sebou (→). Odpověď se NEukazuje sama.
+   2) Kdykoli jde odpověď ukázat tlačítkem „Odhalit“ (nebo klávesou R).
+   3) Po poslední otázce přijde „Vyhodnocení“ a stejné otázky znovu,
+      tentokrát rovnou s odpověďmi (skript je zkopíruje níže).
+   4) Kde je podrobnější výklad, ukáže se u odpovědi tlačítko „Víc“ (klávesa V).
+
+   KLÁVESY: → / mezerník / klikr = další · ← = zpět · R = odhalit
+            V = víc · 1–6 = bod skupině (Shift = −1) · T = pauza · F = celá obrazovka · H = nápověda
+   ================================================================== */
+
+// ---------- 1) Zkopírovat otázky do bloku „Vyhodnocení“ ----------
+// Každý snímek s class="q" se naklonuje a vloží za snímek „Vyhodnocení“.
+// Kopie má data-answer="1" → odpověď je na ní vždy vidět a nemá časovač.
+(function buildAnswerSlides() {
+  const divider = document.getElementById('answersDivider');
+  let insertAfter = divider;
+  document.querySelectorAll('.slide.q').forEach(q => {
+    const copy = q.cloneNode(true);
+    copy.dataset.answer = '1';
+    copy.dataset.time = '0';
+    copy.dataset.label = 'Vyhodnocení · ' + q.dataset.label.replace(/^Kolo \d · /, '');
+    insertAfter.after(copy);
+    insertAfter = copy;
+  });
+})();
+
+const slides = [...document.querySelectorAll('.slide')];
+const teamColors = ['#c8281e', '#1d4b97', '#f0bf00', '#111111', '#17703a', '#8a4fbf'];
+let current = 0;
+
+// ---------- 2) Tlačítko „Víc ▸“ je v horní liště; ukáže se jen když je odpověď vidět a existuje výklad ----------
+const moreBtn = document.getElementById('moreBtn');
+function updateMore() {
+  const s = slides[current];
+  moreBtn.style.display = s.querySelector('.detail') && s.classList.contains('revealed') ? '' : 'none';
+}
+
+// --- Bezpečné čtení/zápis do localStorage (v soukromém okně může selhat) ---
+function load(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch (e) { return fallback; }
+}
+function save(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* nevadí */ }
+}
+
+// ---------------- SKUPINY A BODY ----------------
+let teams = load('kw-teams', null) || makeTeams(4);
+function makeTeams(n) {
+  return Array.from({ length: n }, (_, i) => ({ name: 'Skupina ' + (i + 1), pts: 0 }));
+}
+function renderScores(bumpIndex) {
+  const box = document.getElementById('scores');
+  const max = Math.max(...teams.map(t => t.pts));
+  box.innerHTML = '';
+  teams.forEach((t, i) => {
+    const el = document.createElement('div');
+    el.className = 'team' + (max > 0 && t.pts === max ? ' lead' : '') + (i === bumpIndex ? ' bump' : '');
+    el.innerHTML = `
+      <span class="key" title="Klávesa ${i + 1}" style="background:${teamColors[i]}; color:${i === 2 ? '#111' : '#fff'}">${i + 1}</span>
+      <input value="${t.name.replace(/"/g, '&quot;')}" aria-label="Název skupiny">
+      <button aria-label="minus bod">−</button>
+      <span class="score">${t.pts}</span>
+      <button aria-label="plus bod">+</button>`;
+    const [minus, plus] = el.querySelectorAll('button');
+    minus.onclick = () => addPoint(i, -1);
+    plus.onclick  = () => addPoint(i, +1);
+    const input = el.querySelector('input');
+    input.onchange = e => { t.name = e.target.value || ('Skupina ' + (i + 1)); persist(); };
+    input.onkeydown = e => { if (e.key === 'Enter') input.blur(); };
+    box.appendChild(el);
+  });
+  document.querySelectorAll('[data-teams]').forEach(b => b.classList.toggle('on', +b.dataset.teams === teams.length));
+  renderFinal();
+}
+function addPoint(i, delta) {
+  if (!teams[i]) return;
+  teams[i].pts += delta;
+  save('kw-teams', teams);
+  renderScores(i);
+}
+function persist() { save('kw-teams', teams); renderScores(); }
+function renderFinal() {
+  document.getElementById('finalBoard').innerHTML = [...teams].sort((a, b) => b.pts - a.pts)
+    .map((t, i) => `<div>${i === 0 ? '🏆 ' : ''}${t.name}<b>${t.pts}</b></div>`).join('');
+}
+document.querySelectorAll('[data-teams]').forEach(b => b.onclick = () => {
+  teams = makeTeams(+b.dataset.teams).map((t, i) => teams[i] || t);
+  persist();
+});
+
+// ---------------- NAVIGACE ----------------
+const revealBtn = document.getElementById('revealBtn');
+function hasAnswer(s) { return !!s.querySelector('.answer, .verdict, ol.claims, .quad .odd'); }
+
+function show(i) {
+  current = Math.max(0, Math.min(slides.length - 1, i));
+  closeOverlays();
+  slides.forEach((s, k) => {
+    s.classList.toggle('active', k === current);
+    // kopie ve Vyhodnocení mají odpověď vždy vidět, otázky ji mají schovanou
+    s.classList.toggle('revealed', s.dataset.answer === '1');
+  });
+  const s = slides[current];
+  const qid = document.getElementById('qid');
+  qid.textContent = s.dataset.id || '';
+  qid.classList.toggle('ans', s.dataset.answer === '1');      // zelený štítek ve vyhodnocení
+  document.getElementById('roundLabel').textContent = s.dataset.label;
+  // tlačítko Odhalit jen tam, kde je co odhalit a odpověď ještě není vidět
+  revealBtn.style.visibility = hasAnswer(s) && s.dataset.answer !== '1' ? 'visible' : 'hidden';
+  revealBtn.textContent = 'Odhalit';
+  updateMore();
+  startTimer();
+  save('kw-slide', current);
+}
+function reveal() {
+  const s = slides[current];
+  if (!hasAnswer(s) || s.dataset.answer === '1') return;
+  s.classList.toggle('revealed');
+  revealBtn.textContent = s.classList.contains('revealed') ? 'Schovat' : 'Odhalit';
+  updateMore();
+}
+moreBtn.onclick = openDetail;
+document.getElementById('prevBtn').onclick = () => show(current - 1);
+document.getElementById('nextBtn').onclick = () => show(current + 1);
+revealBtn.onclick = reveal;
+
+// ---------------- PANELY: Víc + Nápověda ----------------
+const detailPanel = document.getElementById('detailPanel');
+const helpPanel = document.getElementById('help');
+function openDetail() {
+  const d = slides[current].querySelector('.detail');
+  if (!d || !slides[current].classList.contains('revealed')) return;   // „Víc“ až po odhalení
+  document.getElementById('detailTitle').textContent = d.dataset.title || 'Víc';
+  document.getElementById('detailBody').innerHTML = d.innerHTML;
+  detailPanel.classList.add('open');
+}
+function closeOverlays() { detailPanel.classList.remove('open'); helpPanel.classList.remove('open'); }
+detailPanel.onclick = e => { if (e.target === detailPanel) closeOverlays(); };
+helpPanel.onclick = () => closeOverlays();
+document.getElementById('helpBtn').onclick = () => helpPanel.classList.toggle('open');
+
+// ---------------- ČASOVAČ ----------------
+// Spustí se sám při vstupu na otázku; klik nebo T = pauza / pokračovat
+let remaining = 0, ticking = null;
+const timerEl = document.getElementById('timer');
+function fmt(s) { const a = Math.abs(s); return (s < 0 ? '−' : '') + Math.floor(a / 60) + ':' + String(a % 60).padStart(2, '0'); }
+function drawTimer() {
+  timerEl.textContent = fmt(remaining);
+  timerEl.classList.toggle('over', remaining <= 0 && ticking !== null);
+  timerEl.classList.toggle('running', ticking !== null && remaining > 0);
+  timerEl.classList.toggle('paused', ticking === null && remaining > 0);
+}
+function stopTimer() { clearInterval(ticking); ticking = null; drawTimer(); }
+function startTimer() {
+  stopTimer();
+  remaining = +slides[current].dataset.time || 0;
+  timerEl.style.visibility = remaining ? 'visible' : 'hidden';
+  if (remaining) runTimer();
+  drawTimer();
+}
+function runTimer() {
+  ticking = setInterval(() => { remaining--; if (remaining === 0) beep(); drawTimer(); }, 1000);
+}
+function toggleTimer() { if (ticking) stopTimer(); else if (+slides[current].dataset.time) { runTimer(); drawTimer(); } }
+timerEl.onclick = toggleTimer;
+function beep() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.value = 660; o.connect(g); g.connect(ctx.destination);
+    g.gain.setValueAtTime(0.25, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+    o.start(); o.stop(ctx.currentTime + 0.8);
+  } catch (e) { /* bez zvuku */ }
+}
+
+// ---------------- CELÁ OBRAZOVKA ----------------
+function fullscreen() {
+  if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+  else document.exitFullscreen?.();
+}
+document.getElementById('fsBtn').onclick = fullscreen;
+
+// ---------------- KLÁVESY ----------------
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;          // při psaní názvu skupiny nic nedělej
+  const k = e.key.toLowerCase();
+  if (k === 'escape') { closeOverlays(); return; }
+  const digit = /^(?:Digit|Numpad)([1-6])$/.exec(e.code);
+  if (digit) { addPoint(+digit[1] - 1, e.shiftKey ? -1 : +1); return; }
+  if (['arrowright', 'pagedown', ' ', 'enter'].includes(k)) { e.preventDefault(); show(current + 1); }
+  else if (['arrowleft', 'pageup', 'backspace'].includes(k)) { e.preventDefault(); show(current - 1); }
+  else if (k === 'r') reveal();
+  else if (k === 'v') { detailPanel.classList.contains('open') ? closeOverlays() : openDetail(); }
+  else if (k === 'h') helpPanel.classList.toggle('open');
+  else if (k === 't') toggleTimer();
+  else if (k === 'f') fullscreen();
+});
+// Po kliknutí tlačítko ztratí fokus, aby mezerník/Enter neklikl znovu na totéž
+document.addEventListener('click', e => { if (e.target.tagName === 'BUTTON') e.target.blur(); });
+
+// ---------------- START ----------------
+renderScores();
+show(load('kw-slide', 0));
+</script>
+</body>
+</html>
