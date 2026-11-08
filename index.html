@@ -154,6 +154,9 @@
   .setup button { font-size: 1em; min-width: 1.8em; border-width: 2px; padding: 0 .3em; }
   .setup button.on { background: var(--ink); color: #fff; }
   .setup .sep { width: 1.5em; }
+  .setup .back { color: var(--ink); font-weight: 800; text-decoration: none; border: 2px solid var(--ink); padding: 0 .4em; background: #fff; }
+  .setup .back:hover { background: var(--yellow); }
+  .setup #resetBtn { margin-left: .4em; }
 
   /* Panely přes celou obrazovku: nápověda (H) a podrobný výklad „Víc“ (V) */
   .help, .overlay { position: fixed; inset: 0; background: rgba(17,17,17,.6); display: none; align-items: center; justify-content: center; z-index: 50; }
@@ -240,6 +243,7 @@
       <tr><td>po otázce 4C</td><td>blok <b>Vyhodnocení</b>: všechny otázky znovu, s odpověďmi</td></tr>
       <tr><td><kbd>F</kbd></td><td>celá obrazovka</td></tr>
       <tr><td>dole</td><td>názvy skupin jdou přepsat kliknutím</td></tr>
+      <tr><td>úvodní snímek</td><td>počet skupin, <b>Vynulovat body</b> (nová třída), odkaz <b>← Výběr her</b></td></tr>
     </table>
     <p class="muted" style="margin:.5em 0 0">Zavřít: <kbd>H</kbd>, <kbd>Esc</kbd> nebo klik kamkoli.</p>
   </div>
@@ -270,8 +274,10 @@
     </div>
     <!-- Nenápadný řádek pro učitele: nastavení skupin + odkaz na nápovědu -->
     <div class="setup">
-      Skupiny: <button data-teams="2">2</button><button data-teams="3">3</button><button data-teams="4">4</button><button data-teams="5">5</button><button data-teams="6">6</button>
-      <span class="sep"></span> Ovládání: klávesa <b>H</b> nebo <b>?</b> vpravo nahoře
+      <a class="back" href="https://vojtechmatousek-oss.github.io/">← Výběr her</a>
+      <span class="sep"></span> Skupiny: <button data-teams="2">2</button><button data-teams="3">3</button><button data-teams="4">4</button><button data-teams="5">5</button><button data-teams="6">6</button>
+      <button id="resetBtn" title="Nová třída: všechny body na 0">Vynulovat body</button>
+      <span class="sep"></span> Ovládání: <b>H</b> nebo <b>?</b> vpravo nahoře
     </div>
   </section>
 
@@ -645,6 +651,12 @@ function addPoint(i, delta) {
   renderScores(i);
 }
 function persist() { save('kw-teams', teams); renderScores(); }
+// Vynulovat body (nová třída): názvy skupin zůstanou, body na 0, po potvrzení
+document.getElementById('resetBtn').onclick = () => {
+  if (!confirm('Vynulovat body všech skupin?')) return;
+  teams.forEach(t => { t.pts = 0; });
+  persist();
+};
 function renderFinal() {
   document.getElementById('finalBoard').innerHTML = [...teams].sort((a, b) => b.pts - a.pts)
     .map((t, i) => `<div>${i === 0 ? '🏆 ' : ''}${t.name}<b>${t.pts}</b></div>`).join('');
